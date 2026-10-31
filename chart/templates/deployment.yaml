@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ra-prefix-controller
+spec:
+  # A single instance is enough: every node on the link sees the same prefix.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ra-prefix-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ra-prefix-controller
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      # Reads the addresses of the node's NIC.
+      hostNetwork: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: INTERFACE
+              value: {{ required "interface is required" .Values.interface | quote }}
+            - name: POOL_NAME
+              value: {{ .Values.pool.name | quote }}
+            - name: POOL_HOST_PART
+              value: {{ .Values.pool.hostPart | quote }}
+            - name: POOL_PREFIX_LENGTH
+              value: {{ .Values.pool.prefixLength | quote }}
+            - name: POOL_SERVICE_SELECTOR
+              value: {{ $labels := list }}{{ range $k, $v := .Values.pool.serviceSelector }}{{ $labels = append $labels (printf "%s=%s" $k $v) }}{{ end }}{{ join "," $labels | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
