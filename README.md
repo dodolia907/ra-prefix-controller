@@ -1,33 +1,33 @@
 # ra-prefix-controller
 
-RAで配布されるIPv6 prefixに、Ciliumの `CiliumLoadBalancerIPPool` を追従させるコントローラ。ISPの工事などでprefixが変わっても、公開用LB IPが新しいprefixへ移る。DNSはexternal-dnsが追従する。
+A controller that keeps a Cilium `CiliumLoadBalancerIPPool` inside the IPv6 prefix advertised by RA. When the prefix changes, for example during ISP maintenance, the public LB IPs move to the new prefix. external-dns then updates DNS.
 
-## 動作
-- netlinkで指定NICのアドレス変化を受け取り、SLAACアドレスのうちpreferred lifetimeが最長のものから/64を求める。5分ごとの再同期は、取りこぼしと手動変更の修復用。
-- 旧prefixのdeprecatedアドレスは無視する。prefixを検出できないときはプールを変更しない。
-- 使用中のprefixは、deprecatedになるか、他のprefixのpreferred lifetimeが30分より長く上回るまで維持する。複数のprefixが広報されていてもプールが行き来しない代わりに、旧prefixがdeprecatedにならない工事では切り替えが最大で約35分遅れる。
-- ノードのloopbackでヘルスチェックを提供する。`/healthz` は同期処理が動いていること、`/readyz` は直近の同期が成功したことを返す。prefixを検出できないときやAPIエラーの間はPodがNot Readyになるが、再起動はしない。
-- プールがなければ作成し、あれば `spec.blocks` だけを更新する。このプールはGitOps管理に含めないこと。
+## Behavior
+- Watches address changes on the configured NIC through netlink and derives the /64 from the SLAAC address with the longest preferred lifetime. A resync every 5 minutes repairs missed events and manual changes.
+- Ignores deprecated addresses of the old prefix. If no prefix can be detected, the pool is left unchanged.
+- Keeps the current prefix until it is deprecated or another prefix's preferred lifetime exceeds it by more than 30 minutes. This stops the pool from swapping between advertised prefixes, but if maintenance does not deprecate the old prefix, the switch can be delayed by up to about 35 minutes.
+- Serves health checks on the node's loopback. `/healthz` reports that the sync loop is running, and `/readyz` reports that the latest sync succeeded. The pod becomes Not Ready while no prefix can be detected or during API errors, but it is not restarted.
+- Creates the pool if it does not exist; otherwise updates only `spec.blocks`. Do not manage this pool with GitOps.
 
-## 前提
-- NICがRAを受けていること（`forwarding=1` のノードでは `accept_ra=2`）。
-- Cilium LB IPAMが有効で、対象ServiceがNDP/ARPなどで広報されること。
+## Prerequisites
+- The NIC receives RAs (`accept_ra=2` on nodes with `forwarding=1`).
+- Cilium LB IPAM is enabled, and the target Services are advertised by NDP, ARP or similar.
 
-## インストール
+## Installation
 ```
 helm install ra-prefix-controller ./chart -n kube-system --set interface=enp3s0
 ```
 
-| value | 既定値 | 説明 |
+| Value | Default | Description |
 |---|---|---|
-| `interface` | 必須 | RAを受けるNIC |
-| `pool.name` | `ipv6-ndp-pool-gua` | 管理するプール |
-| `pool.hostPart` | `::beef:0` | prefixの後ろに置くホスト部 |
-| `pool.prefixLength` | `112` | プールのprefix長 |
-| `pool.serviceSelector` | `io.cilium/lb-pool: gua` | プール作成時のServiceセレクタ |
-| `healthPort` | `18091` | ヘルスチェックのポート（ノードのloopback） |
+| `interface` | Required | NIC that receives RAs |
+| `pool.name` | `ipv6-ndp-pool-gua` | Pool to manage |
+| `pool.hostPart` | `::beef:0` | Host part placed after the prefix |
+| `pool.prefixLength` | `112` | Prefix length of the pool |
+| `pool.serviceSelector` | `io.cilium/lb-pool: gua` | Service selector set when the pool is created |
+| `healthPort` | `18091` | Health check port (on the node's loopback) |
 
-## 開発
+## Development
 ```
 go test ./...
 docker build -t ra-prefix-controller .
