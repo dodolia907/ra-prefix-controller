@@ -28,8 +28,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, errors.New("INTERFACE is required")
 	}
 	hostPart, err := netip.ParseAddr(envOr("POOL_HOST_PART", "::beef:0"))
-	if err != nil || !hostPart.Is6() {
-		return config{}, fmt.Errorf("invalid POOL_HOST_PART: %v", err)
+	if err != nil {
+		return config{}, fmt.Errorf("invalid POOL_HOST_PART: %w", err)
+	}
+	if !hostPart.Is6() {
+		return config{}, fmt.Errorf("invalid POOL_HOST_PART: %s is not an IPv6 address", hostPart)
 	}
 	bits, err := strconv.Atoi(envOr("POOL_PREFIX_LENGTH", "112"))
 	if err != nil || bits < 64 || bits > 128 {

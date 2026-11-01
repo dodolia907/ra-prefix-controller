@@ -3,6 +3,7 @@ package main
 import (
 	"maps"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -63,5 +64,12 @@ func TestLoadConfigRejectsInvalid(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+func TestLoadConfigExplainsIPv4HostPart(t *testing.T) {
+	_, err := loadConfig(env(map[string]string{"INTERFACE": "eth0", "POOL_HOST_PART": "192.0.2.1"}))
+	if err == nil || strings.Contains(err.Error(), "<nil>") {
+		t.Fatalf("got %v, want a descriptive error", err)
 	}
 }
