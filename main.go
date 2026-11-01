@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -24,23 +22,12 @@ const (
 )
 
 func run(ctx context.Context) error {
-	iface := os.Getenv("INTERFACE")
-	if iface == "" {
-		return errors.New("INTERFACE is required")
-	}
-	hostPart, err := netip.ParseAddr(envOr("POOL_HOST_PART", "::beef:0"))
-	if err != nil || !hostPart.Is6() {
-		return fmt.Errorf("invalid POOL_HOST_PART: %v", err)
-	}
-	bits, err := strconv.Atoi(envOr("POOL_PREFIX_LENGTH", "112"))
-	if err != nil || bits < 64 || bits > 128 {
-		return errors.New("POOL_PREFIX_LENGTH must be between 64 and 128")
-	}
-	selector, err := parseLabels(os.Getenv("POOL_SERVICE_SELECTOR"))
+	conf, err := loadConfig(os.Getenv)
 	if err != nil {
-		return fmt.Errorf("POOL_SERVICE_SELECTOR: %w", err)
+		return err
 	}
-	cfg := poolConfig{name: envOr("POOL_NAME", "ipv6-ndp-pool-gua"), selector: selector}
+	cfg := conf.pool
+	iface, hostPart, bits := conf.iface, conf.hostPart, conf.prefixBits
 
 	client, err := newInClusterClient()
 	if err != nil {
