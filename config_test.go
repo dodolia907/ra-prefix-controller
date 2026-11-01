@@ -16,7 +16,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.iface != "enp3s0" || cfg.hostPart != netip.MustParseAddr("::beef:0") || cfg.prefixBits != 112 ||
+	if cfg.iface != "enp3s0" || cfg.hostPart != netip.MustParseAddr("::beef:0") || cfg.prefixBits != 112 || cfg.healthAddr != "127.0.0.1:18091" ||
 		cfg.pool.name != "ipv6-ndp-pool-gua" || len(cfg.pool.selector) != 0 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
@@ -53,6 +53,8 @@ func TestLoadConfigRejectsInvalid(t *testing.T) {
 		{"non-numeric length", "POOL_PREFIX_LENGTH", "x"},
 		{"length too short", "POOL_PREFIX_LENGTH", "63"},
 		{"length too long", "POOL_PREFIX_LENGTH", "129"},
+		{"non-numeric health port", "HEALTH_PORT", "x"},
+		{"health port out of range", "HEALTH_PORT", "65536"},
 		{"label without value", "POOL_SERVICE_SELECTOR", "a"},
 		{"label without key", "POOL_SERVICE_SELECTOR", "=b"},
 	}

@@ -28,6 +28,7 @@ type harness struct {
 	updates      chan netlink.AddrUpdate
 	result       chan error
 	cancel       context.CancelFunc
+	health       *health
 }
 
 // startLoop must be called inside a synctest bubble.
@@ -37,6 +38,7 @@ func startLoop(t *testing.T, h *harness) {
 		h.addrs = []raAddr{addr("2001:db8:1::1", 64, 3600, true)}
 	}
 	h.updates = make(chan netlink.AddrUpdate)
+	h.health = newHealth()
 	h.result = make(chan error, 1)
 	c := &controller{
 		iface:     "eth0",
@@ -49,6 +51,7 @@ func startLoop(t *testing.T, h *harness) {
 			defer h.mu.Unlock()
 			return h.addrs, h.readErr
 		},
+		health: h.health,
 		reconcile: func(_ context.Context, cidr string) (bool, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -194,5 +197,69 @@ func TestLoopFailsWhenSubscriptionCloses(t *testing.T) {
 		if err := <-h.result; err == nil {
 			t.Fatal("expected an error")
 		}
+	})
+}
+
+func TestLoopKeepsPrefixUntilOtherLeadsByMargin(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const week = 604800
+		set := func(h *harness, one, two int) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.addrs = []raAddr{addr("2001:db8:1::1", 64, one, true), addr("2001:db8:2::1", 64, two, true)}
+		}
+		h := &harness{}
+		startLoop(t, h)
+		h.wantSyncs(t, 1)
+
+		// The second prefix edges ahead, as lifetimes do between RAs.
+		set(h, week-600, week)
+		h.updates <- netlink.AddrUpdate{LinkIndex: testLink}
+		time.Sleep(debounce)
+		h.wantSyncs(t, 2)
+
+		// The first prefix stops being advertised and falls behind.
+		set(h, week-switchMargin-1, week)
+		h.updates <- netlink.AddrUpdate{LinkIndex: testLink}
+		time.Sleep(debounce)
+		h.wantSyncs(t, 3)
+
+		h.mu.Lock()
+		cidrs := slices.Clone(h.cidrs)
+		h.mu.Unlock()
+		want := []string{testCIDR, testCIDR, "2001:db8:2::beef:0/112"}
+		if !slices.Equal(cidrs, want) {
+			t.Fatalf("cidrs = %v, want %v", cidrs, want)
+		}
+		h.stop(t)
+	})
+}
+
+func TestLoopDoesNotAdoptPrefixWhenReconcileFails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const week = 604800
+		h := &harness{addrs: []raAddr{addr("2001:db8:1::1", 64, week, true)}, reconcileErr: errors.New("boom")}
+		startLoop(t, h)
+		h.wantSyncs(t, 1)
+		if h.health.isReady() {
+			t.Fatal("ready after a failed reconcile")
+		}
+		// Nothing was written, so the first prefix has no claim to be kept.
+		h.mu.Lock()
+		h.addrs = []raAddr{addr("2001:db8:1::1", 64, week-600, true), addr("2001:db8:2::1", 64, week, true)}
+		h.reconcileErr = nil
+		h.mu.Unlock()
+		time.Sleep(retryPeriod)
+		h.wantSyncs(t, 2)
+		h.mu.Lock()
+		last := h.cidrs[1]
+		h.mu.Unlock()
+		if last != "2001:db8:2::beef:0/112" {
+			t.Fatalf("cidr = %s", last)
+		}
+		if !h.health.isReady() {
+			t.Fatal("not ready after a successful reconcile")
+		}
+		h.stop(t)
 	})
 }

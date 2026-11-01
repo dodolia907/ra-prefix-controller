@@ -4,11 +4,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/vishvananda/netlink"
 )
@@ -34,7 +38,22 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("subscribe to address changes: %w", err)
 	}
 
+	h := newHealth()
+	listener, err := net.Listen("tcp", cfg.healthAddr)
+	if err != nil {
+		return fmt.Errorf("health endpoint: %w", err)
+	}
+	server := &http.Server{Handler: h.handler(), ReadHeaderTimeout: 5 * time.Second}
+	defer server.Close()
+	go func() {
+		// A dead endpoint fails the liveness probe, which restarts the pod.
+		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("health endpoint", "error", err)
+		}
+	}()
+
 	c := &controller{
+		health:    h,
 		iface:     cfg.iface,
 		linkIndex: link.Attrs().Index,
 		poolName:  cfg.pool.name,

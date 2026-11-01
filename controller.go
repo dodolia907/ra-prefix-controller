@@ -25,31 +25,43 @@ type controller struct {
 	bits      int
 	readAddrs func() ([]raAddr, error)
 	reconcile func(ctx context.Context, cidr string) (bool, error)
+	health    *health
+	current   netip.Prefix
 }
 
-// sync reconciles once and returns the delay until the next sync.
+var errNoPrefix = errors.New("no preferred RA prefix found")
+
+// sync reconciles once, records the outcome and returns the delay until the
+// next sync.
 func (c *controller) sync(ctx context.Context) time.Duration {
+	delay, err := c.syncOnce(ctx)
+	c.health.record(err)
+	return delay
+}
+
+func (c *controller) syncOnce(ctx context.Context) (time.Duration, error) {
 	addrs, err := c.readAddrs()
 	if err != nil {
 		slog.Error("read addresses", "error", err)
-		return retryPeriod
+		return retryPeriod, err
 	}
-	prefix, ok := selectPrefix(addrs)
+	prefix, ok := selectPrefix(addrs, c.current)
 	if !ok {
 		// A lost RA must not take the public addresses away.
 		slog.Warn("no preferred RA prefix found; leaving the pool unchanged", "interface", c.iface)
-		return resyncPeriod
+		return resyncPeriod, errNoPrefix
 	}
 	cidr := poolCIDR(prefix, c.hostPart, c.bits)
 	changed, err := c.reconcile(ctx, cidr)
 	if err != nil {
 		slog.Error("reconcile pool", "pool", c.poolName, "error", err)
-		return retryPeriod
+		return retryPeriod, err
 	}
+	c.current = prefix
 	if changed {
 		slog.Info("pool updated", "pool", c.poolName, "cidr", cidr)
 	}
-	return resyncPeriod
+	return resyncPeriod, nil
 }
 
 // loop syncs immediately, then whenever the timer fires. The periodic sync only

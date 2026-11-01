@@ -25,7 +25,7 @@ func TestSelectPrefix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := selectPrefix(tt.addrs)
+			got, ok := selectPrefix(tt.addrs, netip.Prefix{})
 			if tt.want == "" {
 				if ok {
 					t.Fatalf("got %s, want none", got)
@@ -43,5 +43,31 @@ func TestPoolCIDR(t *testing.T) {
 	got := poolCIDR(netip.MustParsePrefix("2001:db8:1:2::/64"), netip.MustParseAddr("::beef:0"), 112)
 	if want := "2001:db8:1:2::beef:0/112"; got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func TestSelectPrefixKeepsCurrent(t *testing.T) {
+	current := netip.MustParsePrefix("2001:db8:1::/64")
+	const week = 604800
+	tests := []struct {
+		name  string
+		addrs []raAddr
+		want  string
+	}{
+		{"current leads", []raAddr{addr("2001:db8:1::1", 64, week, true), addr("2001:db8:2::1", 64, week-600, true)}, "2001:db8:1::/64"},
+		{"other leads within margin", []raAddr{addr("2001:db8:1::1", 64, week-600, true), addr("2001:db8:2::1", 64, week, true)}, "2001:db8:1::/64"},
+		{"other leads by exactly the margin", []raAddr{addr("2001:db8:1::1", 64, week-switchMargin, true), addr("2001:db8:2::1", 64, week, true)}, "2001:db8:1::/64"},
+		{"other leads beyond the margin", []raAddr{addr("2001:db8:1::1", 64, week-switchMargin-1, true), addr("2001:db8:2::1", 64, week, true)}, "2001:db8:2::/64"},
+		{"current deprecated", []raAddr{addr("2001:db8:1::1", 64, 0, true), addr("2001:db8:2::1", 64, 60, true)}, "2001:db8:2::/64"},
+		{"current gone", []raAddr{addr("2001:db8:2::1", 64, 60, true)}, "2001:db8:2::/64"},
+		{"longest address of current counts", []raAddr{addr("2001:db8:1::1", 64, 60, true), addr("2001:db8:1::2", 64, week, true), addr("2001:db8:2::1", 64, week, true)}, "2001:db8:1::/64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := selectPrefix(tt.addrs, current)
+			if !ok || got.String() != tt.want {
+				t.Fatalf("got %s (%v), want %s", got, ok, tt.want)
+			}
+		})
 	}
 }

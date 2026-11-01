@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ type config struct {
 	hostPart   netip.Addr
 	prefixBits int
 	pool       poolConfig
+	healthAddr string
 }
 
 // loadConfig reads the configuration through getenv, normally os.Getenv.
@@ -42,7 +44,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if err != nil {
 		return config{}, fmt.Errorf("POOL_SERVICE_SELECTOR: %w", err)
 	}
+	healthPort, err := strconv.Atoi(envOr("HEALTH_PORT", "18091"))
+	if err != nil || healthPort < 1 || healthPort > 65535 {
+		return config{}, errors.New("HEALTH_PORT must be between 1 and 65535")
+	}
 	return config{
+		// Loopback only: the pod shares the network of the node, including its
+		// public addresses.
+		healthAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(healthPort)),
 		iface:      iface,
 		hostPart:   hostPart,
 		prefixBits: bits,
