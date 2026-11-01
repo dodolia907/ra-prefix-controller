@@ -79,35 +79,41 @@ type poolConfig struct {
 	selector map[string]string
 }
 
+type lbPool struct {
+	APIVersion string     `json:"apiVersion,omitempty"`
+	Kind       string     `json:"kind,omitempty"`
+	Metadata   *poolMeta  `json:"metadata,omitempty"`
+	Spec       lbPoolSpec `json:"spec"`
+}
+
+type poolMeta struct {
+	Name string `json:"name"`
+}
+
+type lbPoolSpec struct {
+	Blocks          []poolBlock      `json:"blocks"`
+	ServiceSelector *serviceSelector `json:"serviceSelector,omitempty"`
+}
+
+type poolBlock struct {
+	CIDR string `json:"cidr"`
+}
+
+type serviceSelector struct {
+	MatchLabels map[string]string `json:"matchLabels"`
+}
+
 // reconcilePool creates the pool or points it at cidr, and reports whether it
 // changed anything.
 func reconcilePool(ctx context.Context, c *apiClient, cfg poolConfig, cidr string) (bool, error) {
-	blocks := []map[string]string{{"cidr": cidr}}
 	status, data, err := c.do(ctx, http.MethodGet, poolsPath+"/"+cfg.name, "", nil)
 	if err != nil {
 		return false, err
 	}
 	switch status {
 	case http.StatusNotFound:
-		spec := map[string]any{"blocks": blocks}
-		if len(cfg.selector) > 0 {
-			spec["serviceSelector"] = map[string]any{"matchLabels": cfg.selector}
-		}
-		body, err := json.Marshal(map[string]any{
-			"apiVersion": "cilium.io/v2",
-			"kind":       "CiliumLoadBalancerIPPool",
-			"metadata":   map[string]any{"name": cfg.name},
-			"spec":       spec,
-		})
-		if err != nil {
+		if err := createPool(ctx, c, cfg, cidr); err != nil {
 			return false, err
-		}
-		status, data, err = c.do(ctx, http.MethodPost, poolsPath, "application/json", body)
-		if err != nil {
-			return false, err
-		}
-		if status != http.StatusCreated {
-			return false, fmt.Errorf("create pool: HTTP %d: %s", status, data)
 		}
 		return true, nil
 	case http.StatusOK:
@@ -115,29 +121,55 @@ func reconcilePool(ctx context.Context, c *apiClient, cfg poolConfig, cidr strin
 		return false, fmt.Errorf("get pool: HTTP %d: %s", status, data)
 	}
 
-	var pool struct {
-		Spec struct {
-			Blocks []struct {
-				CIDR string `json:"cidr"`
-			} `json:"blocks"`
-		} `json:"spec"`
-	}
+	var pool lbPool
 	if err := json.Unmarshal(data, &pool); err != nil {
 		return false, err
 	}
 	if len(pool.Spec.Blocks) == 1 && pool.Spec.Blocks[0].CIDR == cidr {
 		return false, nil
 	}
-	body, err := json.Marshal(map[string]any{"spec": map[string]any{"blocks": blocks}})
-	if err != nil {
+	if err := patchPoolCIDR(ctx, c, cfg.name, cidr); err != nil {
 		return false, err
-	}
-	status, data, err = c.do(ctx, http.MethodPatch, poolsPath+"/"+cfg.name, "application/merge-patch+json", body)
-	if err != nil {
-		return false, err
-	}
-	if status != http.StatusOK {
-		return false, fmt.Errorf("patch pool: HTTP %d: %s", status, data)
 	}
 	return true, nil
+}
+
+func createPool(ctx context.Context, c *apiClient, cfg poolConfig, cidr string) error {
+	pool := lbPool{
+		APIVersion: "cilium.io/v2",
+		Kind:       "CiliumLoadBalancerIPPool",
+		Metadata:   &poolMeta{Name: cfg.name},
+		Spec:       lbPoolSpec{Blocks: []poolBlock{{CIDR: cidr}}},
+	}
+	if len(cfg.selector) > 0 {
+		pool.Spec.ServiceSelector = &serviceSelector{MatchLabels: cfg.selector}
+	}
+	body, err := json.Marshal(pool)
+	if err != nil {
+		return err
+	}
+	status, data, err := c.do(ctx, http.MethodPost, poolsPath, "application/json", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return fmt.Errorf("create pool: HTTP %d: %s", status, data)
+	}
+	return nil
+}
+
+// patchPoolCIDR replaces only spec.blocks, so other fields keep their values.
+func patchPoolCIDR(ctx context.Context, c *apiClient, name, cidr string) error {
+	body, err := json.Marshal(lbPool{Spec: lbPoolSpec{Blocks: []poolBlock{{CIDR: cidr}}}})
+	if err != nil {
+		return err
+	}
+	status, data, err := c.do(ctx, http.MethodPatch, poolsPath+"/"+name, "application/merge-patch+json", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("patch pool: HTTP %d: %s", status, data)
+	}
+	return nil
 }
