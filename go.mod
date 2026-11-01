@@ -1,4 +1,4 @@
-module github.com/dodolia907/k8s/plugins/ra-prefix-controller
+module github.com/dodolia907/ra-prefix-controller
 
 go 1.26.0
 
