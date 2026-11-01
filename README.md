@@ -5,6 +5,8 @@ RAで配布されるIPv6 prefixに、Ciliumの `CiliumLoadBalancerIPPool` を追
 ## 動作
 - netlinkで指定NICのアドレス変化を受け取り、SLAACアドレスのうちpreferred lifetimeが最長のものから/64を求める。5分ごとの再同期は、取りこぼしと手動変更の修復用。
 - 旧prefixのdeprecatedアドレスは無視する。prefixを検出できないときはプールを変更しない。
+- 使用中のprefixは、deprecatedになるか、他のprefixのpreferred lifetimeが30分より長く上回るまで維持する。複数のprefixが広報されていてもプールが行き来しない代わりに、旧prefixがdeprecatedにならない工事では切り替えが最大で約35分遅れる。
+- ノードのloopbackでヘルスチェックを提供する。`/healthz` は同期処理が動いていること、`/readyz` は直近の同期が成功したことを返す。prefixを検出できないときやAPIエラーの間はPodがNot Readyになるが、再起動はしない。
 - プールがなければ作成し、あれば `spec.blocks` だけを更新する。このプールはGitOps管理に含めないこと。
 
 ## 前提
@@ -23,6 +25,7 @@ helm install ra-prefix-controller ./chart -n kube-system --set interface=enp3s0
 | `pool.hostPart` | `::beef:0` | prefixの後ろに置くホスト部 |
 | `pool.prefixLength` | `112` | プールのprefix長 |
 | `pool.serviceSelector` | `io.cilium/lb-pool: gua` | プール作成時のServiceセレクタ |
+| `healthPort` | `18091` | ヘルスチェックのポート（ノードのloopback） |
 
 ## 開発
 ```

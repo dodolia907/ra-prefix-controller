@@ -42,6 +42,22 @@ spec:
               value: {{ .Values.pool.prefixLength | quote }}
             - name: POOL_SERVICE_SELECTOR
               value: {{ $labels := list }}{{ range $k, $v := .Values.pool.serviceSelector }}{{ $labels = append $labels (printf "%s=%s" $k $v) }}{{ end }}{{ join "," $labels | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.healthPort | quote }}
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: {{ .Values.healthPort }}
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /readyz
+              port: {{ .Values.healthPort }}
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

@@ -14,6 +14,9 @@ pool:
   serviceSelector:
     io.cilium/lb-pool: gua
 
+# Served on the loopback of the node, because the pod uses hostNetwork.
+healthPort: 18091
+
 resources:
   requests:
     cpu: 5m
